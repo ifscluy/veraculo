@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VERNÁCULO</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #010208;
+  overflow: hidden;
+  font-family: 'Cinzel Decorative', serif;
+}
+#sky  { position: fixed; inset: 0; z-index: 0; }
+#stars{ position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+
+/* ── LOCK SCREEN ── */
+#screen-lock {
+  position: fixed; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 1.8s ease;
+}
+#screen-lock.dissolve { opacity: 0; pointer-events: none; }
+
+/* circle button */
+#lock-btn {
+  position: relative;
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none; background: transparent;
+  outline: none;
+}
+/* the visible ring */
+#lock-btn::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1.2px solid rgba(195,225,255,0.45);
+  transition: border-color 0.2s;
+}
+/* canvas inside button for glow (injected by JS) */
+#btn-glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+}
+
+/* ── FLASH OVERLAY ── */
+#flash {
+  position: fixed; inset: 0; z-index: 20;
+  pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse 80% 70% at 50% 50%,
+    #ffffff 0%, rgba(235,246,255,0.97) 5%,
+    rgba(205,232,255,0.72) 16%,
+    rgba(170,212,255,0.30) 36%,
+    rgba(130,185,250,0.08) 58%,
+    transparent 72%);
+}
+
+/* ── PROFILE SCREEN ── */
+#screen-profile {
+  position: fixed; inset: 0; z-index: 8;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+}
+#screen-profile.visible {
+  opacity: 1; pointer-events: auto;
+  transition: opacity 2s ease 0.45s;
+}
+
+.portrait-outer {
+  position: relative;
+  width: 210px; height: 210px;
+  margin-bottom: 42px;
+}
+.compass-ring {
+  position: absolute;
+  inset: -44px;
+  width: calc(100% + 88px);
+  height: calc(100% + 88px);
+  animation: spinCompass 28s linear infinite;
+}
+.compass-ring-rev {
+  position: absolute;
+  inset: -26px;
+  width: calc(100% + 52px);
+  height: calc(100% + 52px);
+  animation: spinCompass 18s linear infinite reverse;
+}
+@keyframes spinCompass { to { transform: rotate(360deg); } }
+
+#halo-canvas {
+  position: absolute;
+  inset: -80px;
+  width: calc(100% + 160px);
+  height: calc(100% + 160px);
+  pointer-events: none;
+  border-radius: 50%;
+}
+
+.portrait-mask {
+  width: 210px; height: 210px;
+  border-radius: 50%; overflow: hidden; position: relative;
+}
+.portrait-mask img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center 8%;
+  filter: saturate(0.2) brightness(0.74) contrast(1.10);
+}
+.portrait-mask::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 38% 28%, rgba(200,228,255,0.18), transparent 60%);
+}
+
+.name-main {
+  font-family: 'Cinzel Decorative', serif; font-weight: 300;
+  font-size: clamp(2.4rem, 5.5vw, 3.6rem);
+  letter-spacing: 0.20em; color: #dceeff; text-align: center;
+  text-shadow:
+    0 0 22px rgba(200,230,255,0.55),
+    0 0 65px rgba(175,215,255,0.22),
+    0 0 120px rgba(150,200,250,0.10);
+  line-height: 1; display: block;
+}
+.name-rule {
+  display: block; margin: 16px auto 0;
+  width: 70px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(180,215,255,0.40), transparent);
+}
+</style>
+</head>
+<body>
+
+<canvas id="sky"></canvas>
+<canvas id="stars"></canvas>
+
+<div id="screen-lock">
+  <button id="lock-btn" aria-label="Revelar">
+    <canvas id="btn-glow"></canvas>
+  </button>
+</div>
+
+<div id="flash"></div>
+
+<div id="screen-profile">
+  <div class="portrait-outer" id="portrait-outer">
+    <svg class="compass-ring"     id="cring-outer" viewBox="0 0 298 298" fill="none" xmlns="http://www.w3.org/2000/svg"></svg>
+    <svg class="compass-ring-rev" id="cring-inner" viewBox="0 0 262 262" fill="none" xmlns="http://www.w3.org/2000/svg"></svg>
+    <canvas id="halo-canvas"></canvas>
+    <div class="portrait-mask">
+      <img src="https://i.ibb.co/ZzT3vTKL/image.png" alt="Vernáculo">
+    </div>
+  </div>
+  <span class="name-main">Vernáculo</span>
+  <span class="name-rule"></span>
+</div>
+
+<script>
+(function(){
+
+/* ═══ RESIZE / SKY ═══ */
+const sky  = document.getElementById('sky');
+const sc   = sky.getContext('2d');
+let W, H;
+
+function init(){
+  W = sky.width  = window.innerWidth;
+  H = sky.height = window.innerHeight;
+  starCvs.width = W; starCvs.height = H;
+  seedStars();
+  resizeHalo();
+}
+
+/* ═══ MOON PULSE STATE ═══ */
+let moonPulse  = 0;   /* 0..1 current brightness */
+let moonT      = 0;
+let surgeTimer = 0;
+let surgeActive= false;
+let surgePhase = 0;
+let nextSurge  = 3 + Math.random()*4;
+
+function moonLoop(dt){
+  moonT += dt * 0.30;
+  const base = 0.5 + 0.5*Math.sin(moonT);
+
+  surgeTimer += dt;
+  if(!surgeActive && surgeTimer > nextSurge){
+    surgeActive = true; surgeTimer = 0;
+    nextSurge = 4 + Math.random()*6;
+    surgePhase = 0;
+  }
+  let surge = 0;
+  if(surgeActive){
+    surgePhase += dt;
+    const dur = 2.6;
+    const p   = surgePhase / dur;
+    surge = p < 0.3 ? p/0.3 : 1-(p-0.3)/0.7;
+    surge = Math.max(0, Math.min(1, surge));
+    if(surgePhase >= dur){ surgeActive = false; surge = 0; }
+  }
+
+  moonPulse = base * 0.45 + surge * 0.55;
+  moonPulse = Math.max(0, Math.min(1, moonPulse));
+}
+
+/* ═══ DRAW SKY + MOON ═══ */
+function drawSky(){
+  sc.clearRect(0,0,W,H);
+  const g = sc.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,   '#010209');
+  g.addColorStop(0.40,'#020613');
+  g.addColorStop(0.75,'#040b20');
+  g.addColorStop(1,   '#050e26');
+  sc.fillStyle = g; sc.fillRect(0,0,W,H);
+
+  const mx = W*0.5, my = H*0.22, r = 46;
+  const mp  = moonPulse;
+
+  /* far atmosphere halo */
+  const farR = r * (7 + mp*3.5);
+  const far  = sc.createRadialGradient(mx,my,0,mx,my,farR);
+  far.addColorStop(0,    `rgba(215,238,255,${0.22 + mp*0.38})`);
+  far.addColorStop(0.10, `rgba(200,228,255,${0.14 + mp*0.22})`);
+  far.addColorStop(0.28, `rgba(175,212,250,${0.06 + mp*0.10})`);
+  far.addColorStop(0.55, `rgba(145,190,245,${0.02 + mp*0.04})`);
+  far.addColorStop(1,    'transparent');
+  sc.fillStyle = far;
+  sc.beginPath(); sc.arc(mx,my,farR,0,Math.PI*2); sc.fill();
+
+  /* mid halo */
+  const midR = r * (2.5 + mp*1.2);
+  const mid  = sc.createRadialGradient(mx,my,0,mx,my,midR);
+  mid.addColorStop(0,   `rgba(228,245,255,${0.50 + mp*0.45})`);
+  mid.addColorStop(0.40,`rgba(198,226,255,${0.20 + mp*0.25})`);
+  mid.addColorStop(1,   'transparent');
+  sc.fillStyle = mid;
+  sc.beginPath(); sc.arc(mx,my,midR,0,Math.PI*2); sc.fill();
+
+  /* disc */
+  sc.beginPath(); sc.arc(mx,my,r,0,Math.PI*2);
+  const face = sc.createRadialGradient(mx-12,my-11,3,mx,my,r);
+  face.addColorStop(0,  '#eef6ff');
+  face.addColorStop(0.5,'#cfe1f8');
+  face.addColorStop(1,  '#9ec0db');
+  sc.fillStyle = face; sc.fill();
+  sc.strokeStyle = `rgba(218,240,255,${0.45 + mp*0.40})`;
+  sc.lineWidth = 0.9; sc.stroke();
+
+  /* crescent */
+  sc.beginPath(); sc.arc(mx+20,my-5, r*0.84, 0, Math.PI*2);
+  sc.fillStyle = '#010209'; sc.fill();
+
+  /* rim glow */
+  const rim = sc.createRadialGradient(mx,my,r*0.76,mx,my,r*1.5);
+  rim.addColorStop(0,   'transparent');
+  rim.addColorStop(0.55,`rgba(205,232,255,${0.06 + mp*0.24})`);
+  rim.addColorStop(1,   'transparent');
+  sc.fillStyle = rim;
+  sc.beginPath(); sc.arc(mx,my,r*1.5,0,Math.PI*2); sc.fill();
+}
+
+/* ═══ STARS ═══ */
+const starCvs = document.getElementById('stars');
+const sctx    = starCvs.getContext('2d');
+let stars = [];
+
+function seedStars(){
+  stars = [];
+  const n = Math.floor(W*H/2200);
+  for(let i=0;i<n;i++) stars.push({
+    x: Math.random()*W, y: Math.random()*H*0.9,
+    r: 0.2+Math.random()*1.2, b: 0.2+Math.random()*0.78,
+    t: Math.random()*Math.PI*2, s: 0.25+Math.random()*1.6
+  });
+}
+
+function animStars(){
+  sctx.clearRect(0,0,W,H);
+  for(const s of stars){
+    s.t += 0.006*s.s;
+    const a = s.b*(0.42+0.58*Math.sin(s.t));
+    sctx.beginPath(); sctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    sctx.fillStyle = `rgba(212,234,255,${a})`; sctx.fill();
+  }
+}
+
+/* ═══ PORTRAIT HALO ═══ */
+const haloCvs = document.getElementById('halo-canvas');
+const hctx    = haloCvs.getContext('2d');
+
+function resizeHalo(){
+  const outer = document.getElementById('portrait-outer');
+  const S = outer.offsetWidth + 160;
+  haloCvs.width = haloCvs.height = Math.round(S);
+}
+
+function drawHalo(){
+  const S  = haloCvs.width;
+  hctx.clearRect(0,0,S,S);
+  const cx = S/2;
+  const r  = S * 0.52 * (0.86 + moonPulse*0.18);
+  const g  = hctx.createRadialGradient(cx,cx,S*0.14,cx,cx,r);
+  const op = 0.15 + moonPulse*0.42;
+  g.addColorStop(0,    `rgba(195,225,255,${op * 0.9})`);
+  g.addColorStop(0.38, `rgba(172,212,252,${op * 0.45})`);
+  g.addColorStop(0.72, `rgba(145,195,248,${op * 0.12})`);
+  g.addColorStop(1,    'transparent');
+  hctx.fillStyle = g;
+  hctx.beginPath(); hctx.arc(cx,cx,r,0,Math.PI*2); hctx.fill();
+}
+
+/* ═══ BUTTON GLOW ═══ */
+const btnGlowCvs = document.getElementById('btn-glow');
+const bgctx      = btnGlowCvs.getContext('2d');
+let btnHover  = false;
+let btnT      = 0;
+
+const lockBtn = document.getElementById('lock-btn');
+lockBtn.addEventListener('mouseenter', ()=>{ btnHover = true; });
+lockBtn.addEventListener('mouseleave', ()=>{ btnHover = false; });
+
+function drawBtnGlow(){
+  /* size the glow canvas much larger than btn so it can spill outward */
+  const S = btnHover ? 480 : 260;
+  if(btnGlowCvs.width !== S){
+    btnGlowCvs.width = btnGlowCvs.height = S;
+    btnGlowCvs.style.width  = S+'px';
+    btnGlowCvs.style.height = S+'px';
+  }
+  bgctx.clearRect(0,0,S,S);
+
+  btnT += 0.04;
+  const pulse = 0.5 + 0.5*Math.sin(btnT * (btnHover ? 2.2 : 0.9));
+
+  if(btnHover){
+    /* MASSIVE glow on hover */
+    const g1 = bgctx.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+    g1.addColorStop(0,    `rgba(240,250,255,${0.72 + pulse*0.28})`);
+    g1.addColorStop(0.06, `rgba(220,242,255,${0.55 + pulse*0.30})`);
+    g1.addColorStop(0.14, `rgba(195,228,255,${0.35 + pulse*0.25})`);
+    g1.addColorStop(0.30, `rgba(170,215,252,${0.18 + pulse*0.18})`);
+    g1.addColorStop(0.55, `rgba(145,195,248,${0.07 + pulse*0.10})`);
+    g1.addColorStop(1,    'transparent');
+    bgctx.fillStyle = g1;
+    bgctx.beginPath(); bgctx.arc(S/2,S/2,S/2,0,Math.PI*2); bgctx.fill();
+  } else {
+    /* subtle idle breathe */
+    const g2 = bgctx.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+    g2.addColorStop(0,   `rgba(210,235,255,${0.22 + pulse*0.18})`);
+    g2.addColorStop(0.30,`rgba(185,218,252,${0.10 + pulse*0.10})`);
+    g2.addColorStop(0.70,`rgba(155,200,248,${0.04 + pulse*0.05})`);
+    g2.addColorStop(1,   'transparent');
+    bgctx.fillStyle = g2;
+    bgctx.beginPath(); bgctx.arc(S/2,S/2,S/2,0,Math.PI*2); bgctx.fill();
+  }
+}
+
+/* ═══ COMPASS ═══ */
+function buildCompass(svgEl, size, ticks, r_outer, r_inner, r_card){
+  const cx = size/2, cy = size/2;
+  svgEl.setAttribute('viewBox',`0 0 ${size} ${size}`);
+  let h = '';
+  h += `<circle cx="${cx}" cy="${cy}" r="${r_outer}" stroke="rgba(180,215,255,0.18)" stroke-width="0.6" fill="none"/>`;
+  h += `<circle cx="${cx}" cy="${cy}" r="${r_inner}" stroke="rgba(180,215,255,0.10)" stroke-width="0.4" fill="none"/>`;
+  for(let i=0;i<ticks;i++){
+    const a   = (Math.PI*2/ticks)*i - Math.PI/2;
+    const isC = i%(ticks/4)===0;
+    const isM = i%(ticks/8)===0 && !isC;
+    const len = isC?12:isM?7:4;
+    const col = isC?'rgba(210,235,255,0.65)':isM?'rgba(180,215,255,0.35)':'rgba(160,200,250,0.18)';
+    const w   = isC?1.2:0.6;
+    const x1=cx+Math.cos(a)*r_outer, y1=cy+Math.sin(a)*r_outer;
+    const x2=cx+Math.cos(a)*(r_outer-len), y2=cy+Math.sin(a)*(r_outer-len);
+    h += `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="${col}" stroke-width="${w}" stroke-linecap="round"/>`;
+  }
+  const dirs=['N','E','S','O'];
+  [0,Math.PI/2,Math.PI,Math.PI*3/2].forEach((a,i)=>{
+    const rx=cx+Math.cos(a-Math.PI/2)*r_card, ry=cy+Math.sin(a-Math.PI/2)*r_card, s=5;
+    h += `<polygon points="${rx},${ry-s} ${rx+s},${ry} ${rx},${ry+s} ${rx-s},${ry}" fill="rgba(200,228,255,0.55)" stroke="rgba(215,238,255,0.25)" stroke-width="0.4"/>`;
+    const lx=cx+Math.cos(a-Math.PI/2)*(r_outer-20), ly=cy+Math.sin(a-Math.PI/2)*(r_outer-20)+4;
+    h += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-family="Courier New,monospace" font-size="7" letter-spacing="1" fill="rgba(180,215,255,0.38)">${dirs[i]}</text>`;
+  });
+  svgEl.innerHTML = h;
+}
+buildCompass(document.getElementById('cring-outer'),298,72,144,134,148);
+buildCompass(document.getElementById('cring-inner'),262,48,126,118,130);
+
+/* ═══ REVEAL ═══ */
+let done = false;
+lockBtn.addEventListener('click',()=>{
+  if(done) return; done = true;
+
+  /* FLASHBANG */
+  const fl = document.getElementById('flash');
+  fl.style.transition = 'opacity 0.04s';
+  fl.style.opacity = '1';
+  setTimeout(()=>{ fl.style.transition='opacity 3.2s ease'; fl.style.opacity='0'; }, 60);
+
+  document.getElementById('screen-lock').classList.add('dissolve');
+  document.getElementById('screen-profile').classList.add('visible');
+  resizeHalo();
+});
+
+/* ═══ MAIN LOOP ═══ */
+let last = 0;
+function loop(ts){
+  const dt = Math.min((ts - last)*0.001, 0.1);
+  last = ts;
+  moonLoop(dt);
+  drawSky();
+  animStars();
+  drawHalo();
+  drawBtnGlow();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', init);
+init();
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
